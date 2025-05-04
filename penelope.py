@@ -581,10 +581,15 @@ def my_input(text="", histfile=None, histlen=None, completer=lambda text, state:
 		#readline.set_auto_history(True)
 
 	core.output_line_buffer << b"\n" + text.encode()
+    # Print ANSI escape codes safely
+	if text:
+		sys.stdout.write(text)
+		sys.stdout.flush()
+
 	core.wait_input = True
 
 	try:
-		response = original_input(text)
+		response = original_input("")
 
 		if readline:
 			#readline.set_completer(None)
@@ -1222,7 +1227,7 @@ class MainMenu(BetterCMD):
 			upload https://www.exploit-db.com/exploits/40611  Download the underlying exploit code locally and upload it to the target
 		"""
 		if local_items:
-			core.sessions[self.sid].upload(local_items, randomize_fname=options.upload_random_suffix)
+			core.sessions[self.sid].upload(local_items, randomize_fname=False)
 		else:
 			cmdlogger.warning("No files or directories specified")
 
@@ -2344,6 +2349,9 @@ class Session:
 					self.logfile = open(self.logpath, 'ab', buffering=0)
 					if not options.no_timestamps:
 						self.logfile.write(str(paint(datetime.now().strftime(LOG_TIMESTAMP_FMT)).magenta).encode())
+						self.logfile.write(str(paint(datetime.now().strftime("%Y-%m-%d %H:%M:%S: ")).magenta).encode())
+				else:
+					self.histfile = None
 
 				for module in modules().values():
 					if module.enabled and module.on_session_start:
@@ -2664,8 +2672,12 @@ class Session:
 				tmpname = rand(10)
 				common_dirs = ("/dev/shm", "/tmp", "/var/tmp")
 				for directory in common_dirs:
-					if self.exec(f'echo {tmpname} > {directory}/{tmpname} 2>/dev/null && echo OK', value=True) == 'OK':
-						self.exec(f'rm {directory}/{tmpname}')
+					test_file = f"{directory}/{tmpname}.sh"
+					self.exec(f'echo "#!/bin/sh\necho exec-ok" > {test_file}')
+					self.exec(f'chmod +x {test_file}')
+					output = self.exec(test_file, value=True)
+					self.exec(f'rm {test_file}')
+					if output and "exec-ok" in output:
 						self._tmp = directory
 						break
 				else:
@@ -3463,7 +3475,7 @@ class Session:
 			logger.error(e)
 			return []
 
-		local_download_folder = self.directory / "downloads"
+		local_download_folder = Path.cwd()
 		try:
 			local_download_folder.mkdir(parents=True, exist_ok=True)
 		except Exception as e:
@@ -3540,7 +3552,7 @@ class Session:
 				tar.add = handle_exceptions(tar.add)
 				for item in items:
 					try:
-						tar.add(os.path.abspath(item))
+						tar.add(os.path.abspath(item), arcname=os.path.basename(item))
 					except:
 						stderr_stream << (str(sys.exc_info()[1]) + '\n').encode()
 				tar.close()
@@ -3677,7 +3689,7 @@ class Session:
 			# Present the downloads
 			downloaded = []
 			for path in remote_paths:
-				local_path = local_download_folder / path[1:]
+				local_path = local_download_folder / Path(path).name
 				if os.path.isabs(path) and os.path.exists(local_path):
 					downloaded.append(local_path)
 				else:
