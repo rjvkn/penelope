@@ -2354,7 +2354,7 @@ class Session:
 					output = self.exec(test_file, value=True)
 
 					self.exec(f'rm {test_file}')
-					if output and "ok" in output:
+					if output and output == "ok":
 						self._tmp = directory
 						break
 				else:
