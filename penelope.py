@@ -2349,12 +2349,12 @@ class Session:
 				common_dirs = ("/dev/shm", "/tmp", "/var/tmp")
 				for directory in common_dirs:
 					test_file = f"{directory}/{tmpname}.sh"
-					self.exec(f'echo "#!/bin/sh\necho exec-ok" > {test_file}')
+					self.exec(f'echo "#!/bin/sh\necho ok" > {test_file}')
 					self.exec(f'chmod +x {test_file}')
 					output = self.exec(test_file, value=True)
 
 					self.exec(f'rm {test_file}')
-					if output and "exec-ok" in output:
+					if output and "ok" in output:
 						self._tmp = directory
 						break
 				else:
