@@ -16,7 +16,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 __program__= "penelope"
-__version__ = "0.14.9"
+__version__ = "0.14.10"
 
 import os
 import io
@@ -2268,9 +2268,7 @@ class Session:
 			response = self.exec("echo \"$(id -un)($(id -u))\"", agent_typing=True, value=True)
 
 		elif self.OS == 'Windows':
-			if self.type == 'PTY':
-				return None # TODO
-			response = self.exec("whoami", value=True)
+			response = self.exec("whoami", force_cmd=True, value=True)
 
 		return response or ''
 
@@ -2434,10 +2432,7 @@ class Session:
 		var_name1, var_name2, var_value1, var_value2 = (rand(4) for _ in range(4))
 
 		def expect(data):
-			try:
-				data = data.decode()
-			except:
-				return False
+			data = data.decode(errors="replace")
 
 			if var_value1 + var_value2 in data:
 				return True
@@ -2459,7 +2454,7 @@ class Session:
 		)
 
 		if response:
-			response = response.decode()
+			response = response.decode(errors="replace")
 
 			if var_value1 + var_value2 in response:
 				self.OS = 'Unix'
@@ -2490,45 +2485,21 @@ class Session:
 				self.interactive = True
 				self.echoing = False
 				self.prompt = response.splitlines()[-1].encode()
+		else:
+			return False
 
-		else: #TODO check if it is needed
-			def expect(data):
-				try:
-					data = data.decode()
-				except:
-					return False
-				if var_value1 + var_value2 in data:
-					return True
-
-			response = self.exec(
-				f"${var_name1}='{var_value1}'; ${var_name2}='{var_value2}'; echo ${var_name1}${var_name2}\r\n",
-				raw=True,
-				expect_func=expect
+		if self.OS == 'Windows' and '\x1b' in response:
+			self.type = 'PTY'
+			self.echoing = True
+			columns, lines = shutil.get_terminal_size()
+			cmd = (
+				f"$width={columns}; $height={lines}; "
+				"$Host.UI.RawUI.BufferSize = New-Object Management.Automation.Host.Size ($width, $height); "
+				"$Host.UI.RawUI.WindowSize = New-Object -TypeName System.Management.Automation.Host.Size "
+				"-ArgumentList ($width, $height)"
 			)
-			if not response:
-				return False
-			response = response.decode()
-
-			if var_value1 + var_value2 in response:
-				self.OS = 'Windows'
-				self.type = 'Raw'
-				self.subtype = 'psh'
-				self.interactive = not var_value1 + var_value2 == response
-				self.echoing = False
-				self.prompt = response.splitlines()[-1].encode()
-				if var_name1 in response and not f"echo ${var_name1}${var_name2}" in response:
-					self.type = 'PTY'
-					columns, lines = shutil.get_terminal_size()
-					cmd = (
-						f"$width={columns}; $height={lines}; "
-						"$Host.UI.RawUI.BufferSize = New-Object Management.Automation.Host.Size ($width, $height); "
-						"$Host.UI.RawUI.WindowSize = New-Object -TypeName System.Management.Automation.Host.Size "
-						"-ArgumentList ($width, $height)"
-					)
-					self.exec(cmd)
-					self.prompt = response.splitlines()[-2].encode()
-				else:
-					self.prompt = re.sub(var_value1.encode() + var_value2.encode(), b"", self.prompt)
+			self.exec(cmd)
+			self.prompt = response.split()[-1].encode()
 
 		self.get_shell_info(silent=True)
 		if self.tty:
@@ -2689,7 +2660,7 @@ class Session:
 				os.close(stdin_stream._read)
 				del self.streams[stdin_stream.id]
 
-				return buffer.getvalue().rstrip().decode() if value else True
+				return buffer.getvalue().rstrip().decode(errors="replace") if value else True
 			return None
 
 		with self.lock:
@@ -2846,7 +2817,9 @@ class Session:
 			logger.debug(f"{paint('FINAL TIME: ').white_BLUE}{_stop - _start}")
 
 			if value and self.subchannel.result is not False:
-				self.subchannel.result = self.subchannel.result.strip().decode() # TODO check strip
+				if self.OS == 'Windows' and self.type == 'PTY': # quirk
+					self.subchannel.result = re.sub(rb'\x1b\[(?:K|\?25h|25l|82X)', b'', self.subchannel.result)
+				self.subchannel.result = self.subchannel.result.strip().decode(errors="replace") # TODO check strip
 			logger.debug(f"{paint('FINAL RESPONSE: ').white_BLUE}{self.subchannel.result}")
 			self.subchannel.active = False
 
