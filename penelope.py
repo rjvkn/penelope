@@ -2537,9 +2537,6 @@ class Session:
 		stderr_stream=None,	# stderr_stream object
 		agent_control=None	# control queue
 	):
-		if caller() == 'run':
-			value = True
-
 		if self.agent and not agent_typing: # TODO environment will not be the same as shell
 			if cmd:
 				cmd = dedent(cmd)
