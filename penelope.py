@@ -16,7 +16,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 __program__= "penelope"
-__version__ = "0.14.15"
+__version__ = "0.14.16"
 
 import os
 import io
@@ -894,7 +894,7 @@ class MainMenu(BetterCMD):
 					print("\n", indent(str(table), "    "), "\n", sep="")
 			else:
 				print()
-				cmdlogger.warning("No sessions yet 😟")
+				cmdlogger.warning(f"No sessions yet {EMOJIS['no_sessions']}")
 				print()
 
 	@session_operation()
@@ -1821,7 +1821,7 @@ def Connect(host, port):
 	else:
 		if not core.started:
 			core.start()
-		logger.info(f"Connected to {paint(host).blue}:{paint(port).red} 🎯")
+		logger.info(f"Connected to {paint(host).blue}:{paint(port).red} {EMOJIS['target']}")
 		session = Session(_socket, host, port)
 		if session:
 			return True
@@ -1978,7 +1978,7 @@ class Session:
 			try:
 				self.ip = _socket.getpeername()[0]
 			except:
-				logger.error(f"Invalid connection from {self.target} 🙄")
+				logger.error(f"Invalid connection from {self.target} {EMOJIS['invalid_shell']}")
 				return
 			self._host, self._port = self.socket.getsockname()
 			self.listener = listener
@@ -2077,7 +2077,7 @@ class Session:
 
 				logger.info(
 					f"Got {self.source} shell from "
-					f"{self.name_colored}{paint().green} 😍️ "
+					f"{self.name_colored}{paint().green} {EMOJIS['new_shell']} "
 					f"Assigned SessionID {paint('<' + str(self.id) + '>').yellow}"
 				)
 
@@ -2985,7 +2985,7 @@ class Session:
 				self.kill()
 				return False
 
-			logger.info(f"Shell upgraded successfully using {paint(_bin).yellow}{paint().green}! 💪")
+			logger.info(f"Shell upgraded successfully using {paint(_bin).yellow}{paint().green}! {EMOJIS['upgrade']}")
 
 			self.agent = self.can_deploy_agent
 			self.type = 'PTY'
@@ -3070,7 +3070,7 @@ class Session:
 		)
 
 		if not options.no_log:
-			logger.info(f"Logging to {paint(self.logpath).yellow_DIM} 📜")
+			logger.info(f"Logging to {paint(self.logpath).yellow_DIM} {EMOJIS['logfile']}")
 		print(paint('─').DIM * shutil.get_terminal_size()[0])
 
 		core.attached_session = self
@@ -3929,12 +3929,12 @@ class Session:
 		self.socket.close()
 
 		if not self.OS:
-			message = f"Invalid shell from {self.ip} 🙄"
+			message = f"Invalid shell from {self.ip} {EMOJIS['invalid_shell']}"
 		else:
 			message = f"Session [{self.id}] died..."
 			core.hosts[self.name].remove(self)
 			if not core.hosts[self.name]:
-				message += f" We lost {self.name_colored} 💔"
+				message += f" We lost {self.name_colored} {EMOJIS['lost']}"
 				del core.hosts[self.name]
 
 		if self.id in core.sessions:
@@ -4320,7 +4320,7 @@ class upload_privesc_scripts(Module):
 	category = "Privilege Escalation"
 	def run(session, args):
 		"""
-		Upload a set of privilege escalation scripts to the target
+		Upload {linpeas,lse,deepce,pspy|winpeas,powerup,privesccheck} to the target
 		"""
 		if session.OS == 'Unix':
 			session.upload(URLS['linpeas'])
@@ -4636,11 +4636,11 @@ class FileServer:
 			ips = [ip for ip in Interfaces().list.values()]
 
 		for ip in ips:
-			output.extend(('', '🏠 http://' + str(paint(ip).cyan) + ":" + str(paint(self.port).red) + '/' + self.url_prefix))
+			output.extend(('', f'{EMOJIS["home"]} http://' + str(paint(ip).cyan) + ":" + str(paint(self.port).red) + '/' + self.url_prefix))
 			table = Table(joinchar=' → ')
 			for urlpath, filepath in self.filemap.items():
 				table += (
-					paint(f"{'📁' if os.path.isdir(filepath) else '📄'} ").green +
+					paint(f"{EMOJIS['folder'] if os.path.isdir(filepath) else EMOJIS['file']} ").green +
 					paint(f"http://{ip}:{self.port}{urlpath}").white_BLUE, filepath
 				)
 			output.append(str(table))
@@ -4765,7 +4765,7 @@ def custom_excepthook(*args):
 		exc_type, exc_value, exc_traceback = args
 	else:
 		return
-	print("\n", paint('Oops...').RED, '🐞\n', paint().yellow, '─' * 80, sep='')
+	print("\n", paint('Oops...').RED, f'{EMOJIS["bug"]}\n', paint().yellow, '─' * 80, sep='')
 	sys.__excepthook__(exc_type, exc_value, exc_traceback)
 	print('─' * 80, f"\n{paint('Penelope version:').red} {paint(__version__).green}")
 	print(f"{paint('Python version:').red} {paint(sys.version).green}")
@@ -4900,10 +4900,10 @@ def listener_menu():
 		tty.setraw(sys.stdin)
 		stdout(
 			f"\r\x1b[?25l{paint('➤ ').white} "
-			f"🏠 {paint('Main Menu').green} (m) "
-			f"💀 {paint('Payloads').magenta} (p) "
-			f"🔄 {paint('Clear').yellow} (Ctrl-L) "
-			f"🚫 {paint('Quit').red} (q/Ctrl-C)\r\n".encode()
+			f"{EMOJIS['home']} {paint('Main Menu').green} (m) "
+			f"{EMOJIS['skull']} {paint('Payloads').magenta} (p) "
+			f"{EMOJIS['refresh']} {paint('Clear').yellow} (Ctrl-L) "
+			f"{EMOJIS['cancel']} {paint('Quit').red} (q/Ctrl-C)\r\n".encode()
 		)
 
 		r, _, _ = select([sys.stdin, listener_menu.control_r], [], [])
@@ -4945,25 +4945,19 @@ def load_rc():
 		RC.touch()
 	os.chmod(RC, 0o600)
 
-def fonts_installed():
-	possible_paths = (
-		"/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
-		"/usr/share/fonts/noto/NotoColorEmoji.ttf",
-		"/usr/local/share/fonts/noto/NotoColorEmoji.ttf",
-		"/usr/local/share/fonts/noto-emoji/NotoColorEmoji.ttf"
-	)
-
-	for path in possible_paths:
-		if os.path.isfile(path):
-			return True
+def emojis_installed():
 	if myOS == "Darwin":
 		return True
 	try:
-		if "Noto Color Emoji" in subprocess.run(["fc-list"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True).stdout:
-			return True
+		result = subprocess.run(
+			["fc-list", ":charset=1F480"],  # 1F480 = Skull emoji
+			stdout=subprocess.PIPE,
+			stderr=subprocess.PIPE,
+			text=True
+		)
+		return bool(result.stdout)
 	except:
 		pass
-	return False
 
 # OPTIONS
 class Options:
@@ -5274,6 +5268,10 @@ URLS = {
 	'pspy64':	"https://github.com/DominicBreuker/pspy/releases/latest/download/pspy64",
 	'panix':	"https://github.com/Aegrah/PANIX/releases/latest/download/panix.sh",
 }
+EMOJIS = {
+	'folder':'📁', 'file':'📄', 'invalid_shell':'🙄', 'new_shell':'😍️', 'target':'🎯', 'upgrade':'💪', 'logfile':'📜',
+	'lost':'💔', 'home':'🏠', 'bug':'🐞', 'skull':'💀', 'refresh':'🔄', 'cancel':'🚫', 'no_sessions':'😟',
+}
 
 # Python Agent code
 GET_GLOB_SIZE = inspect.getsource(get_glob_size)
@@ -5305,8 +5303,9 @@ start = menu.start
 Listener = TCPListener
 
 # Check for installed emojis
-if not fonts_installed():
-	logger.warning("For showing emojis please install 'fonts-noto-color-emoji'")
+if not emojis_installed():
+	logger.warning("Emojis disabled")
+	EMOJIS = defaultdict(str)
 
 # Load peneloperc
 load_rc()
